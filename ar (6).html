@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>เกมเรียนรู้ เรื่อง สระอา AR</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Mali (Handwriting style for kids) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Mali:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- MediaPipe Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Mali', cursive;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #eff6ff; /* Blue-50 */
+            touch-action: none; /* Prevent scroll on touch devices */
+        }
+
+        /* Glassmorphism utility */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.45);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 2px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+        }
+
+        .glass-hud {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(8px);
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Background Floating Animations */
+        @keyframes float {
+            0% { transform: translateY(0px) rotate(0deg); }
+            50% { transform: translateY(-20px) rotate(5deg); }
+            100% { transform: translateY(0px) rotate(0deg); }
+        }
+        @keyframes float-slow {
+            0% { transform: translateY(0px) translateX(0px); }
+            50% { transform: translateY(-15px) translateX(15px); }
+            100% { transform: translateY(0px) translateX(0px); }
+        }
+        
+        .bg-element {
+            position: absolute;
+            z-index: -1;
+            pointer-events: none;
+            opacity: 0.8;
+        }
+
+        .float-1 { animation: float 6s ease-in-out infinite; }
+        .float-2 { animation: float-slow 8s ease-in-out infinite; }
+
+        /* Input field for certificate */
+        .name-input {
+            background: transparent;
+            border: none;
+            border-bottom: 3px dashed #6b7280;
+            outline: none;
+            text-align: center;
+            font-family: 'Mali', cursive;
+            font-size: 1.5rem;
+            color: #1f2937;
+            width: 80%;
+            margin-top: 10px;
+            padding-bottom: 5px;
+            transition: border-color 0.3s;
+        }
+        .name-input:focus {
+            border-bottom-color: #3b82f6;
+        }
+
+        /* Button hover effects */
+        .btn-start {
+            transition: all 0.3s ease;
+        }
+        .btn-start:not(:disabled):hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.5);
+        }
+        .btn-start:disabled {
+            filter: grayscale(100%);
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        #game-canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+        }
+        
+        /* Hidden video element for MediaPipe processing */
+        #webcam-video {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Decorative Background Elements -->
+    <div class="bg-element float-1 text-6xl" style="top: 10%; left: 10%;">☁️</div>
+    <div class="bg-element float-2 text-7xl" style="top: 15%; right: 15%;">☀️</div>
+    <div class="bg-element float-1 text-6xl" style="top: 60%; left: 5%;">🌈</div>
+    <div class="bg-element float-2 text-5xl" style="top: 70%; right: 10%;">☁️</div>
+    
+    <!-- Main Game Container -->
+    <div class="relative w-full h-screen overflow-hidden">
+        
+        <!-- Video & Canvas -->
+        <video id="webcam-video" autoplay playsinline></video>
+        <canvas id="game-canvas"></canvas>
+
+        <!-- HUD: Timer & Score (Hidden initially) -->
+        <div id="hud" class="absolute top-0 left-0 w-full p-4 flex justify-between items-start pointer-events-none hidden z-10">
+            <div class="glass-hud rounded-2xl px-6 py-2 flex items-center gap-2">
+                <span class="text-3xl">⏱️</span>
+                <span id="timer-display" class="text-2xl font-bold text-red-500">60</span>
+            </div>
+            <div class="glass-hud rounded-2xl px-6 py-2 flex items-center gap-2">
+                <span class="text-3xl">⭐</span>
+                <span id="score-display" class="text-2xl font-bold text-yellow-500">0</span>
+            </div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="absolute inset-0 flex items-center justify-center z-20 transition-opacity duration-500">
+            <div class="glass-panel rounded-3xl p-8 max-w-md w-[90%] text-center flex flex-col items-center">
+                <h1 class="text-3xl md:text-4xl font-bold text-blue-600 mb-4 drop-shadow-sm">
+                    เกมเรียนรู้ เรื่อง สระอา AR<br>
+                    <span class="text-2xl text-pink-500">(ฝึกอ่านคำศัพท์)</span>
+                </h1>
+                
+                <div class="text-left bg-white/60 rounded-xl p-4 mb-6 text-gray-700 w-full shadow-inner">
+                    <p class="font-bold mb-2">🎮 วิธีเล่น:</p>
+                    <ul class="list-disc pl-5 space-y-1 text-sm md:text-base">
+                        <li>ใช้กล้องเว็บแคมจับภาพมือของคุณ 🖐️</li>
+                        <li>ทำท่า <b class="text-pink-500">จีบนิ้ว</b> 🤏 เพื่อหยิบคำศัพท์ที่ตกลงมา</li>
+                        <li>ลากไปใส่ <b class="text-blue-500">สมุดคำศัพท์ 📖</b> ด้านล่างเพื่อรับคะแนน</li>
+                        <li>หากไม่มีกล้อง ใช้เมาส์/นิ้ว ลากได้เลย!</li>
+                    </ul>
+                </div>
+
+                <button id="start-btn" disabled class="btn-start w-full bg-gradient-to-r from-blue-400 to-blue-600 text-white font-bold text-xl py-3 rounded-full shadow-lg">
+                    กำลังโหลดกล้อง... ⏳
+                </button>
+            </div>
+        </div>
+
+        <!-- End Screen (Certificate) -->
+        <div id="end-screen" class="absolute inset-0 flex items-center justify-center z-30 hidden bg-black/40 backdrop-blur-sm transition-opacity duration-500">
+            <div class="glass-panel rounded-3xl p-8 max-w-lg w-[95%] text-center relative border-4 border-yellow-400 bg-white/90">
+                
+                <!-- Ribbon decoration -->
+                <div class="absolute -top-6 left-1/2 transform -translate-x-1/2 text-5xl">🏆</div>
+
+                <h2 class="text-3xl font-bold text-blue-600 mt-4 mb-1">ใบประกาศนียบัตร</h2>
+                <h3 class="text-xl text-pink-500 font-semibold mb-4">คนเก่งภาษาไทย 🇹🇭</h3>
+                
+                <p class="text-gray-600 mb-2">ขอมอบเกียรติบัตรนี้เพื่อแสดงว่า</p>
+                <input type="text" class="name-input" placeholder="พิมพ์ชื่อ - นามสกุล" autocomplete="off">
+                
+                <p class="text-gray-600 mt-4 mb-2">ทำคะแนนได้ยอดเยี่ยม!</p>
+                <div class="text-6xl font-bold text-yellow-500 mb-6 drop-shadow-md" id="final-score">
+                    0
+                </div>
+
+                <p class="text-sm text-gray-500 mb-6">แคปหน้าจอนี้ส่งคุณครูได้เลยจ้า 📸</p>
+
+                <button id="restart-btn" class="w-full bg-gradient-to-r from-pink-400 to-pink-600 text-white font-bold text-xl py-3 rounded-full shadow-lg hover:scale-105 transition-transform">
+                    เล่นอีกครั้ง 🔄
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Game Configuration & Data ---
+        const vocabData = [
+            { w: 'ตา', e: '👁️', c: '#3b82f6' },
+            { w: 'ยา', e: '💊', c: '#ef4444' },
+            { w: 'กา', e: '🐦', c: '#374151' },
+            { w: 'ขา', e: '🦵', c: '#f97316' },
+            { w: 'ปลา', e: '🐟', c: '#06b6d4' },
+            { w: 'หมา', e: '🐶', c: '#a855f7' },
+            { w: 'ลา', e: '🐴', c: '#6b7280' },
+            { w: 'นา', e: '🌾', c: '#22c55e' },
+            { w: 'งา', e: '🐘', c: '#9ca3af' },
+            { w: 'อา', e: '👨', c: '#eab308' },
+            { w: 'ชา', e: '🍵', c: '#10b981' }
+        ];
+
+        // --- DOM Elements ---
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const videoElement = document.getElementById('webcam-video');
+        const startScreen = document.getElementById('start-screen');
+        const endScreen = document.getElementById('end-screen');
+        const hud = document.getElementById('hud');
+        const startBtn = document.getElementById('start-btn');
+        const restartBtn = document.getElementById('restart-btn');
+        const timerDisplay = document.getElementById('timer-display');
+        const scoreDisplay = document.getElementById('score-display');
+        const finalScoreDisplay = document.getElementById('final-score');
+        const nameInput = document.querySelector('.name-input');
+
+        // --- Game State Variables ---
+        let isPlaying = false;
+        let score = 0;
+        let timeLeft = 60;
+        let gameTimer = null;
+        let spawnTimer = null;
+        
+        let gameItems = [];
+        let floatingTexts = [];
+        let cameraImage = null; // Stores latest frame from mediapipe
+
+        // Input states (unified for Mouse, Touch, Hand) - Support Multiple Pointers (2 Hands + Mouse)
+        let activePointers = new Map();
+        let handLandmarks = []; // Store multiple hands
+
+        // Target Zone (Palette) state
+        let targetZone = { x: 0, y: 0, radius: 70, scale: 1, glow: 0 };
+
+        // Resize Canvas
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            targetZone.x = canvas.width / 2;
+            targetZone.y = canvas.height - 80;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        class GameItem {
+            constructor() {
+                const data = vocabData[Math.floor(Math.random() * vocabData.length)];
+                this.word = data.w;
+                this.emoji = data.e;
+                this.color = data.c;
+                
+                this.radius = 45;
+                this.x = Math.random() * (canvas.width - this.radius * 2) + this.radius;
+                this.y = -this.radius;
+                
+                // Speed variations
+                this.speed = 1.5 + Math.random() * 2;
+                this.isGrabbed = false;
+                this.grabbedBy = null; // Track which pointer is holding this item
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Shadow
+                ctx.shadowColor = 'rgba(0,0,0,0.2)';
+                ctx.shadowBlur = 10;
+                ctx.shadowOffsetY = 5;
+
+                // Background Circle
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.isGrabbed ? '#fef08a' : '#ffffff'; // Yellow if grabbed, white otherwise
+                ctx.fill();
+                
+                // Border
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = this.color;
+                ctx.stroke();
+
+                // Reset shadow for text
+                ctx.shadowColor = 'transparent';
+
+                // Emoji
+                ctx.font = '24px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.emoji, 0, -12);
+
+                // Text
+                ctx.font = 'bold 16px Mali';
+                ctx.fillStyle = this.color;
+                ctx.fillText(this.word, 0, 15);
+
+                ctx.restore();
+            }
+        }
+
+        class FloatingText {
+            constructor(x, y, text, color) {
+                this.x = x;
+                this.y = y;
+                this.text = text;
+                this.color = color;
+                this.alpha = 1;
+                this.life = 60; // frames
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.font = 'bold 36px Mali';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = this.color;
+                
+                // Text stroke for better visibility
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 4;
+                ctx.strokeText(this.text, this.x, this.y);
+                ctx.fillText(this.text, this.x, this.y);
+                ctx.restore();
+            }
+
+            update() {
+                this.y -= 2;
+                this.life--;
+                this.alpha = this.life / 60;
+            }
+        }
+
+        // Fallback timeout in case camera doesn't load
+        let cameraLoadTimeout = setTimeout(() => {
+            startBtn.disabled = false;
+            startBtn.innerHTML = 'เริ่มเกมเลย! 🎮<br><span class="text-sm font-normal">(ใช้เมาส์/นิ้ว ลากได้เลย)</span>';
+        }, 4000);
+
+        function onResults(results) {
+            // Clear timeout if camera loads successfully
+            if (cameraLoadTimeout) {
+                clearTimeout(cameraLoadTimeout);
+                cameraLoadTimeout = null;
+                startBtn.disabled = false;
+                startBtn.innerText = 'เริ่มเกมเลย! 🎮';
+            }
+
+            cameraImage = results.image;
+            handLandmarks = [];
+
+            // Clear old hand pointers, keep mouse pointer
+            for (let key of activePointers.keys()) {
+                if (key.startsWith('hand')) {
+                    activePointers.delete(key);
+                }
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                // Loop through all detected hands (up to 2)
+                results.multiHandLandmarks.forEach((landmarks, index) => {
+                    // Mirror the X coordinates for intuitive control
+                    let mirroredLandmarks = landmarks.map(lm => ({
+                        x: 1 - lm.x, // Mirror logic
+                        y: lm.y,
+                        z: lm.z
+                    }));
+                    handLandmarks.push(mirroredLandmarks);
+
+                    // Check Pinch (Thumb tip = 4, Index tip = 8)
+                    const thumb = mirroredLandmarks[4];
+                    const index_finger = mirroredLandmarks[8];
+                    
+                    // Convert to canvas coordinates
+                    const thumbX = thumb.x * canvas.width;
+                    const thumbY = thumb.y * canvas.height;
+                    const indexX = index_finger.x * canvas.width;
+                    const indexY = index_finger.y * canvas.height;
+
+                    // Calculate distance
+                    const dist = Math.hypot(thumbX - indexX, thumbY - indexY);
+                    
+                    // Midpoint for pointer position
+                    const midX = (thumbX + indexX) / 2;
+                    const midY = (thumbY + indexY) / 2;
+
+                    // Update pointer state (Threshold for pinch ~ 40px)
+                    activePointers.set('hand' + index, {
+                        x: midX,
+                        y: midY,
+                        isDown: dist < 50
+                    });
+                });
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+        
+        hands.setOptions({
+            maxNumHands: 2, // Allow 2 hands
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        
+        // Try starting camera, ignore errors as we have mouse fallback
+        camera.start().catch(err => console.log("Camera not available, falling back to mouse/touch.", err));
+
+        function updatePointer(e, isDownState) {
+            e.preventDefault();
+            let clientX, clientY;
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            
+            let current = activePointers.get('mouse') || { x: -100, y: -100, isDown: false };
+            current.x = clientX;
+            current.y = clientY;
+            if (isDownState !== null) {
+                current.isDown = isDownState;
+            }
+            activePointers.set('mouse', current);
+        }
+
+        canvas.addEventListener('mousedown', (e) => updatePointer(e, true));
+        canvas.addEventListener('mousemove', (e) => updatePointer(e, null));
+        window.addEventListener('mouseup', (e) => updatePointer(e, false));
+
+        canvas.addEventListener('touchstart', (e) => updatePointer(e, true), {passive: false});
+        canvas.addEventListener('touchmove', (e) => updatePointer(e, null), {passive: false});
+        window.addEventListener('touchend', (e) => updatePointer(e, false));
+
+        function gameLoop() {
+            update();
+            draw();
+            if (isPlaying) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function update() {
+            // 1. Handle Grabbing Logic for all active pointers
+            activePointers.forEach((pointer, pointerId) => {
+                let grabbedItem = null;
+                // Find if this pointer is already grabbing an item
+                for (let i = 0; i < gameItems.length; i++) {
+                    if (gameItems[i].grabbedBy === pointerId) {
+                        grabbedItem = gameItems[i];
+                        break;
+                    }
+                }
+
+                if (pointer.isDown) {
+                    if (!grabbedItem) {
+                        // Try to grab an item (iterate backwards to grab top-most)
+                        for (let i = gameItems.length - 1; i >= 0; i--) {
+                            let item = gameItems[i];
+                            if (item.grabbedBy) continue; // Skip if already grabbed by another hand
+
+                            let dist = Math.hypot(pointer.x - item.x, pointer.y - item.y);
+                            if (dist < item.radius + 20) { // Slight leeway
+                                grabbedItem = item;
+                                item.isGrabbed = true;
+                                item.grabbedBy = pointerId;
+                                // Move to end of array to render on top
+                                gameItems.splice(i, 1);
+                                gameItems.push(item);
+                                break;
+                            }
+                        }
+                    } else {
+                        // Update grabbed item position
+                        grabbedItem.x = pointer.x;
+                        grabbedItem.y = pointer.y;
+                    }
+                } else {
+                    // Drop item
+                    if (grabbedItem) {
+                        // Check collision with Target Zone (Notebook)
+                        let dist = Math.hypot(grabbedItem.x - targetZone.x, grabbedItem.y - targetZone.y);
+                        if (dist < targetZone.radius + grabbedItem.radius) {
+                            // Success!
+                            score += 10;
+                            scoreDisplay.innerText = score;
+                            
+                            // Effects
+                            targetZone.scale = 1.4;
+                            targetZone.glow = 1.0;
+                            floatingTexts.push(new FloatingText(targetZone.x, targetZone.y - 50, "+10", "#22c55e"));
+                            
+                            // Remove item
+                            gameItems = gameItems.filter(i => i !== grabbedItem);
+                        }
+                        
+                        grabbedItem.isGrabbed = false;
+                        grabbedItem.grabbedBy = null;
+                    }
+                }
+            });
+
+            // Ensure items that were grabbed by a lost pointer are dropped
+            gameItems.forEach(item => {
+                if (item.grabbedBy && !activePointers.has(item.grabbedBy)) {
+                    item.isGrabbed = false;
+                    item.grabbedBy = null;
+                }
+            });
+
+            // 2. Update Items falling
+            for (let i = gameItems.length - 1; i >= 0; i--) {
+                let item = gameItems[i];
+                if (!item.isGrabbed) {
+                    item.y += item.speed;
+                }
+                // Remove if out of bounds
+                if (item.y > canvas.height + item.radius) {
+                    gameItems.splice(i, 1);
+                }
+            }
+
+            // 3. Update Effects
+            // Target zone animation recovery
+            if (targetZone.scale > 1) targetZone.scale -= 0.05;
+            if (targetZone.glow > 0) targetZone.glow -= 0.05;
+            
+            // Floating texts
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                floatingTexts[i].update();
+                if (floatingTexts[i].life <= 0) {
+                    floatingTexts.splice(i, 1);
+                }
+            }
+        }
+
+        function drawHandBones(landmarks) {
+            ctx.save();
+            // Define connections
+            const connections = [
+                [0,1], [1,2], [2,3], [3,4], // Thumb
+                [0,5], [5,6], [6,7], [7,8], // Index
+                [5,9], [9,10], [10,11], [11,12], // Middle
+                [9,13], [13,14], [14,15], [15,16], // Ring
+                [13,17], [0,17], [17,18], [18,19], [19,20] // Pinky & base
+            ];
+
+            // Draw Lines (Bones)
+            ctx.strokeStyle = '#f472b6'; // Pink-400
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            ctx.beginPath();
+            connections.forEach(([i, j]) => {
+                const pt1 = landmarks[i];
+                const pt2 = landmarks[j];
+                ctx.moveTo(pt1.x * canvas.width, pt1.y * canvas.height);
+                ctx.lineTo(pt2.x * canvas.width, pt2.y * canvas.height);
+            });
+            ctx.stroke();
+
+            // Draw Joints (Points)
+            landmarks.forEach(lm => {
+                ctx.beginPath();
+                ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 5, 0, Math.PI * 2);
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#fbcfe8'; // Pink-200
+                ctx.stroke();
+            });
+            
+            ctx.restore();
+        }
+
+        function draw() {
+            // 1. Draw Background (Webcam or Fallback color)
+            if (cameraImage) {
+                ctx.save();
+                // We mirrored the landmarks math visually, 
+                // so we mirror the video canvas context to match user's actual movement.
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                // Cover full canvas
+                let ratio = Math.max(canvas.width / cameraImage.width, canvas.height / cameraImage.height);
+                let w = cameraImage.width * ratio;
+                let h = cameraImage.height * ratio;
+                let x = (canvas.width - w) / 2;
+                let y = (canvas.height - h) / 2;
+                ctx.drawImage(cameraImage, x, y, w, h);
+                ctx.restore();
+            } else {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // 2. Draw Target Zone (Notebook)
+            ctx.save();
+            ctx.translate(targetZone.x, targetZone.y);
+            ctx.scale(targetZone.scale, targetZone.scale);
+            
+            if (targetZone.glow > 0) {
+                ctx.shadowColor = `rgba(234, 179, 8, ${targetZone.glow})`;
+                ctx.shadowBlur = 30;
+            }
+            
+            // Draw Notebook Emoji
+            ctx.font = '70px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('📖', 0, 0);
+            
+            // Text instruction below
+            ctx.shadowBlur = 0;
+            ctx.font = 'bold 18px Mali';
+            ctx.fillStyle = '#1e3a8a'; // Blue-900
+            ctx.fillText('เก็บลงสมุด!', 0, 45);
+            ctx.restore();
+
+            // 3. Draw Items
+            gameItems.forEach(item => item.draw(ctx));
+
+            // 4. Draw AR Hand & Cursors
+            if (handLandmarks && handLandmarks.length > 0) {
+                handLandmarks.forEach(landmarks => drawHandBones(landmarks));
+            }
+            
+            // Draw Cursor based on all active pointers
+            activePointers.forEach(pointer => {
+                if (pointer.x > 0 && pointer.y > 0) {
+                    ctx.save();
+                    ctx.font = '40px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    // Adjust position slightly so it doesn't block vision
+                    const emoji = pointer.isDown ? '🤏' : '🖐️';
+                    ctx.fillText(emoji, pointer.x, pointer.y - 20);
+                    ctx.restore();
+                }
+            });
+
+            // 5. Draw Floating Texts
+            floatingTexts.forEach(text => text.draw(ctx));
+        }
+
+        function spawnItem() {
+            if (isPlaying && gameItems.length < 12) { // Increased max items for 2 hands
+                gameItems.push(new GameItem());
+            }
+        }
+
+        function startGame() {
+            startScreen.classList.add('opacity-0');
+            endScreen.classList.add('hidden');
+            endScreen.classList.remove('opacity-100');
+            setTimeout(() => {
+                startScreen.classList.add('hidden');
+                hud.classList.remove('hidden');
+            }, 500);
+
+            // Reset variables
+            score = 0;
+            timeLeft = 60;
+            gameItems = [];
+            floatingTexts = [];
+            activePointers.clear();
+            isPlaying = true;
+            
+            scoreDisplay.innerText = score;
+            timerDisplay.innerText = timeLeft;
+            nameInput.value = '';
+
+            // Start Timers
+            spawnTimer = setInterval(spawnItem, 1000); // Faster spawn rate for 2 hands
+            gameTimer = setInterval(() => {
+                timeLeft--;
+                timerDisplay.innerText = timeLeft;
+                
+                if (timeLeft <= 10) {
+                    timerDisplay.classList.add('animate-pulse');
+                }
+
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+
+            // Start Render Loop
+            gameLoop();
+        }
+
+        function endGame() {
+            isPlaying = false;
+            clearInterval(gameTimer);
+            clearInterval(spawnTimer);
+            timerDisplay.classList.remove('animate-pulse');
+            
+            // Clean up items visually
+            gameItems = [];
+
+            // Show Certificate Screen
+            finalScoreDisplay.innerText = score;
+            endScreen.classList.remove('hidden');
+            // small delay for transition
+            setTimeout(() => {
+                endScreen.classList.add('opacity-100');
+            }, 50);
+            
+            hud.classList.add('hidden');
+        }
+
+        // Event Listeners for Buttons
+        startBtn.addEventListener('click', startGame);
+        restartBtn.addEventListener('click', startGame);
+
+    </script>
+</body>
+</html>
